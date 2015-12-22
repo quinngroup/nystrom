@@ -3,11 +3,11 @@ import random
 import utils 
 
 
-def one_shot_nystrom(X,M,kernel_func = utils.dot_kernel):
+def one_shot_nystrom(X,m, k = -1, kernel_func = utils.dot_kernel):
 	"Returns the eigenvectors and eigenvalues of the approximated "
 	"kernel matrix by sampling M datapoints from X and applying the one-shot Nystrom method"
 	D,N = X.shape #dataset X is of size N and D dimensions
-	sample = random.sample(range(N),M)  # choose M out of N for sample
+	sample = random.sample(range(N),m)  # choose m out of N for sample
 	W = X[:,sample] #extract sample matrix W
 	#sample by sample kernel matrix (MxM kernel matrix)
 	Kw = utils.construct_kernel_matrix(W,W, kernel = kernel_func) #W.T*W for dot product
@@ -33,6 +33,9 @@ def one_shot_nystrom(X,M,kernel_func = utils.dot_kernel):
 	#Knys2 = C*Vt_kw.T*S_kw_pinv*U_kw.T*C.T		# Knys = C*pinv(Kw)*C.T ,,, pinv(Kw) = V_kw* S_kw^-1 * U_kw.T
 	#Knys3 = Vnys*np.diag(S_g*S_g)*Vnys.T		# Knys = Vnys * Sg^2 * Vnys.T	
 	#Knys4 = U_g*np.diag(S_g*S_g)*U_g.T
+	if k > 0 :
+		S_nys_k = S_g[:k]
+		return Vnys[:,:k],S_nys_k*S_nys_k
 	return Vnys,S_g*S_g #,Knys1,Knys2,Knys3,Knys4
 
 	
@@ -43,19 +46,19 @@ def one_shot_nystrom(X,M,kernel_func = utils.dot_kernel):
 if __name__ == '__main__':
 	N = 313
 	D = 11
-	M = 100
+	M = 70
 	SCALE = 1000.0
 
 	X = np.matrix(np.random.normal(size = [D,N])*SCALE)  # create a dataset of size N and D dimensions with values in [0,SCALE)
 
-	#kernel_func = lambda x1,x2: utils.rbf_kernel(x1,x2,gamma = 0.05)   # define kernel function
-	kernel_func = utils.dot_kernel
+	kernel_func = lambda x1,x2: utils.rbf_kernel(x1,x2,gamma = 0.05)   # define kernel function
+	#kernel_func = utils.dot_kernel
 
 
 	#whole kernel matrix that we want to approximate (NxN), computed for comparison here
 	Kx = utils.construct_kernel_matrix(X,X, kernel = kernel_func) #X.T*X
 
-	Vnys, Snys = one_shot_nystrom(X,M,kernel_func)
+	Vnys, Snys = one_shot_nystrom(X,M,10,kernel_func)
 	Knys = Vnys*np.diag(Snys)*Vnys.T
 	print(np.linalg.norm(Knys - Kx))
 	#print(np.linalg.norm(Knys1 - Kx))
