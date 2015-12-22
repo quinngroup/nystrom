@@ -16,7 +16,7 @@ def one_shot_nystrom(X,m, k = -1, kernel_func = utils.dot_kernel):
 	C  = utils.construct_kernel_matrix(X,W, kernel = kernel_func) #X.T*W
 
 
-	U_kw,S_kw,Vt_kw = np.linalg.svd(Kw,full_matrices = False)  #decompose Kw
+	U_kw,S_kw,Vt_kw = utils.svd(Kw,full_matrices = False)  #decompose Kw
 	S_kw_pinv = np.diag(utils.vector_pinv(S_kw)) #compute the moore-penrose pseudoinverse of S_kw
 
 	#compute the building block of Knys, the G matrix = C * V_w * S_w^-1
@@ -26,7 +26,7 @@ def one_shot_nystrom(X,m, k = -1, kernel_func = utils.dot_kernel):
 	#so S_w^-1 = sqrt(pinv(S_kw)) = sqrt(S_kw_pinv) computed by the previous code line
 	G=C*Vt_kw.T*np.sqrt(S_kw_pinv)	
 									
-	U_g,S_g,Vt_g = np.linalg.svd(G,full_matrices = False)
+	U_g,S_g,Vt_g = utils.svd(G,full_matrices = False)
 	Vnys = G*Vt_g.T*np.diag(utils.vector_pinv(S_g))   #Vnys = U_g = G*V_g*S^-1
 	#four ways to construct the kernel matrix now
 	#Knys1 = G*G.T                  

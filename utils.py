@@ -11,6 +11,9 @@ def dot_kernel(x1,x2):
 def rbf_kernel(x1,x2,gamma = 0.05):
 	diff = x1-x2
 	return math.exp(-gamma*dot_kernel(diff,diff))
+def svd(x,**kw):
+	print("SVD: ", x.shape)
+	return np.linalg.svd(x,**kw)
 def construct_kernel_matrix(X1,X2,kernel=dot_kernel):
 	return np.matrix(np.array([[kernel(xi,xj) for xj in X2.T] for xi in X1.T]))
 
