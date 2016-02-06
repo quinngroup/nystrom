@@ -12,6 +12,14 @@ import org.apache.spark.mllib.linalg._
 import org.apache.spark.mllib.linalg.distributed._
 
 object Nystrom { 
+	def getSampleSet(min:Int, max:Int, count:Int, seed:Long = scala.util.Random.nextLong):Set[Int] = {
+		val s = scala.collection.mutable.Set[Int]()
+		val r = new scala.util.Random(seed)
+		assert(max-min > count, "Sample count is bigger than the range")
+		while(s.size < count)
+			s.add(r.nextInt(max-min) + min)
+		scala.collection.immutable.Set[Int](s.toSeq:_*)
+	}
 
 	def computeKernelMatrix(A: IndexedRowMatrix, B: IndexedRowMatrix, kernelFunc: (Vector,Vector) => Double): IndexedRowMatrix = 
 
@@ -39,12 +47,28 @@ object Nystrom {
 		new IndexedRowMatrix(
 			m.rows.map( row => new IndexedRow(row.index, Vectors.dense(row.vector.toArray.zip(v.toArray).map(x=> x._1*op(x._2)) )  ))
 		)
+	def sampleIndexedRows(m:IndexedRowMatrix, s:Int):IndexedRowMatrix ={
+		val samples =	getSampleSet(0,m.rows.count.toInt,s)
+		new IndexedRowMatrix(m.rows.filter(samples contains _.index.toInt).map(_.vector).zipWithIndex.map({case (v,i) => new IndexedRow(i,v)}))
+	}
+	def transpose(m :IndexedRowMatrix) :IndexedRowMatrix = new IndexedRowMatrix(
+		m.rows.flatMap({
+			row => row.vector.toArray.zipWithIndex.map({case (x,i) => (i,(row.index, x))})
+			}).groupByKey.map({ case (i, iter) => new IndexedRow(i, Vectors.dense(iter.toSeq.sortWith(_._1<_._1).map(_._2).toArray))}).cache())
+		
+	
 	
 	def oneShotNystrom(originalMatrix :IndexedRowMatrix, s: Int, k:Int, kernelFunc: (Vector,Vector) => Double = dotProductKernel): (IndexedRowMatrix, Vector) = {
 		//val chosen = Set(1,10,50,321,135,512,124,562,845,73,245,327,194,865,14,642,724,634,758)
 		//val W =new IndexedRowMatrix( originalMatrix.rows.filter(chosen contains _.index.toInt ).cache())
-		val W =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
-		
+		//val W =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
+		val W = sampleIndexedRows(originalMatrix, s)
+		if (W.rows.count.toInt < k) {
+			println(W.rows.count.toInt)
+			System.exit(1)
+		}else{
+			println("ok")
+		}
 		val Kw = computeKernelMatrix(W,W,kernelFunc)
 		val C = computeKernelMatrix(originalMatrix, W, kernelFunc)
 		val Kw_svd= Kw.computeSVD(Kw.rows.count.toInt) //Do not use numRows() as it counts the rows by looking up the max index + 1 	
@@ -59,25 +83,22 @@ object Nystrom {
 		
 		
 	}
-	def transpose(m :IndexedRowMatrix) :IndexedRowMatrix = new IndexedRowMatrix(
-		m.rows.flatMap({
-			row => row.vector.toArray.zipWithIndex.map({case (x,i) => (i,(row.index, x))})
-			}).groupByKey.map({ case (i, iter) => new IndexedRow(i, Vectors.dense(iter.toSeq.sortWith(_._1<_._1).map(_._2).toArray))}).cache())
-		
-	
 	def doubleNystrom(originalMatrix :IndexedRowMatrix, s :Int, m :Int, l :Int, k :Int, kernelFunc: (Vector, Vector) => Double = dotProductKernel) : (IndexedRowMatrix, Vector) = {
 
 		//TODO
 
-		val S =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
+		//val S =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
+		val S = sampleIndexedRows(originalMatrix,s)
 		val C0 = computeKernelMatrix(originalMatrix, S, kernelFunc)
 		val VV = oneShotNystrom(S,m,l, kernelFunc)
 		val V_s_l = VV._1
 		val V_s_l_T = transpose(V_s_l)
-		val C = matrixProduct(C0,V_s_l_T)   ///  C0*V_s_l
+		val C = matrixProduct(C0,V_s_l_T)    ///  C0*V_s_l
 		val Ks = computeKernelMatrix(S,S,kernelFunc)
-		val Kw = matrixProduct( matrixProduct(V_s_l,Ks), V_s_l_T) ///  V_s_l.T*Ks*V_s_l
+		val Kw = matrixProduct( matrixProduct(V_s_l_T,Ks), V_s_l_T) ///  V_s_l.T*Ks*V_s_l
 
+		//println((Kw.rows.count(),Kw.numCols()))
+		//System.exit(1)
 		val Kw_svd= Kw.computeSVD(Kw.rows.count.toInt) //Do not use numRows() as it counts the rows by looking up the max index + 1 	
 		val S_kw_pinv = vector_pinv(Kw_svd.s)
 		val G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
@@ -90,13 +111,17 @@ object Nystrom {
 	}
 
 	def main(args: Array[String]){
+		//println(getSampleSet(0, 10, 13))
+		//System.exit(1)	
 		val sc = new SparkContext(new SparkConf().setAppName("DoubleApp"))
 		val data = new IndexedRowMatrix(sc.textFile("data/inputData.csv").map(line => Vectors.dense(line.split(",").map(_.toDouble))).zipWithIndex.map({case (v,i) => new IndexedRow(i,v)}) )
 		//println(dotProductKernel(Vectors.dense(Array(1.0,2.0,3.0)),Vectors.dense(Array(5.0,6.0,7.0))))
 		//println(matrixProduct(data,data).numRows())
-		//val a = oneShotNystrom(data,300, 10,rbfKernel(0.01)_)._2
-		val b = doubleNystrom(data,300,50,10, 10,rbfKernel(0.01)_)._2
-		//println(a)
+
+		val a = oneShotNystrom(data,300,10,rbfKernel(0.01)_)._2
+		val b = doubleNystrom(data,300,100,60, 10,rbfKernel(0.01)_)._2
+		println(a)
 		println(b)
+		
 	}
 }

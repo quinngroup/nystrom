@@ -3,3 +3,4 @@ spark/project/
 spark/target/
 spark/metastore_db/
 spark/derby.log
+samsara/
