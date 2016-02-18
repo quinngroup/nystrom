@@ -12,6 +12,7 @@ import org.apache.spark.mllib.linalg._
 import org.apache.spark.mllib.linalg.distributed._
 
 object Nystrom { 
+	type KernelFunc = (Vector,Vector) => Double
 	def sampleIndexedRows(m:IndexedRowMatrix, count:Int, returnComplement:Boolean = false, seed:Long = scala.util.Random.nextLong):(IndexedRowMatrix,IndexedRowMatrix) = {
 		var indicies = m.rows.map(_.index.toInt).collect.toArray
 		assert(indicies.size>= count, "Sample size is bigger than available rows")
@@ -53,7 +54,7 @@ object Nystrom {
 		}
 	}*/
 
-	def computeKernelMatrix(A: IndexedRowMatrix, B: IndexedRowMatrix, kernelFunc: (Vector,Vector) => Double): IndexedRowMatrix = 
+	def computeKernelMatrix(A: IndexedRowMatrix, B: IndexedRowMatrix, kernelFunc: KernelFunc): IndexedRowMatrix = 
 
 		new IndexedRowMatrix(  A.rows.cartesian(B.rows).map({
 				case (rA, rB) => (rA.index, (rB.index, kernelFunc(rA.vector,rB.vector) ) )
@@ -90,17 +91,11 @@ object Nystrom {
 		
 	
 	
-	def oneShotNystrom(originalMatrix :IndexedRowMatrix, s: Int, k:Int, kernelFunc: (Vector,Vector) => Double = dotProductKernel): (IndexedRowMatrix, Vector) = {
+	def oneShotNystrom(originalMatrix :IndexedRowMatrix, s: Int, k:Int, kernelFunc: KernelFunc = dotProductKernel): (IndexedRowMatrix, Vector) = {
 		//val chosen = Set(1,10,50,321,135,512,124,562,845,73,245,327,194,865,14,642,724,634,758)
 		//val W =new IndexedRowMatrix( originalMatrix.rows.filter(chosen contains _.index.toInt ).cache())
 		//val W =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
 		val (w , cp) = sampleIndexedRows(originalMatrix, s,true)
-		if (w.rows.count.toInt < k) {
-			println(w.rows.count.toInt)
-			System.exit(1)
-		}else{
-			println("ok")
-		}
 		val Kw = computeKernelMatrix(w,w,kernelFunc)
 		val C = new IndexedRowMatrix( computeKernelMatrix(cp, w, kernelFunc).rows.union(Kw.rows))
 		val Kw_svd= Kw.computeSVD(Kw.rows.count.toInt) //Do not use numRows() as it counts the rows by looking up the max index + 1 	
@@ -115,7 +110,7 @@ object Nystrom {
 		
 		
 	}
-	def doubleNystrom(originalMatrix :IndexedRowMatrix, s :Int, m :Int, l :Int, k :Int, kernelFunc: (Vector, Vector) => Double = dotProductKernel) : (IndexedRowMatrix, Vector) = {
+	def doubleNystrom(originalMatrix :IndexedRowMatrix, s :Int, m :Int, l :Int, k :Int, kernelFunc: KernelFunc = dotProductKernel) : (IndexedRowMatrix, Vector) = {
 
 
 		//val S =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
@@ -144,17 +139,31 @@ object Nystrom {
 	def main(args: Array[String]){
 		//println(getSampleSet(0, 10, 13))
 		//System.exit(1)	
+		
+		val datapath = args(0)
+		val delimiter = if (args(1) == "SPACE") " " else args(1)
+		val kernel:KernelFunc = if (args(2).startsWith("rbf")) rbfKernel(args(2).split("_")(1).toDouble)_ else dotProductKernel
+		val k = args(3).toInt
+		val m = args(4).toInt
+		println("Data in: " + datapath)
+		println("Delimiter: "+ delimiter)
+		println("Kernel:"+ kernel.toString)
+		println("k: "+k.toString)
+		println("m: "+m.toString)
 		val sc = new SparkContext(new SparkConf().setAppName("DoubleApp"))
-		val data = new IndexedRowMatrix(sc.textFile("data/inputData.csv").map(line => Vectors.dense(line.split(",").map(_.toDouble))).zipWithIndex.map({case (v,i) => new IndexedRow(i,v)}) )
+		val data = new IndexedRowMatrix(sc.textFile(datapath).map(line => Vectors.dense(line.split(delimiter).map(_.toDouble))).zipWithIndex.map({case (v,i) => new IndexedRow(i,v)}) )
 		//println(dotProductKernel(Vectors.dense(Array(1.0,2.0,3.0)),Vectors.dense(Array(5.0,6.0,7.0))))
 		//println(matrixProduct(data,data).numRows())
-		val kernel = rbfKernel(0.01)_
-		val k = 10
-		//val a = oneShotNystrom(data,300,k,kernel)._2
-		val b = doubleNystrom(data,300,100,60, k,kernel)._2
+		//val kernel = rbfKernel(g)_
+		//val k = 10
+		val beforeSVD = System.currentTimeMillis / 1000.0
+		val a = oneShotNystrom(data,m,k,kernel)._2
+		//val b = doubleNystrom(data,300,100,60, k,kernel)._2
 		//val c = computeKernelMatrix(data,data,kernel).computeSVD(k).s
+		val afterSVD = System.currentTimeMillis/1000.0 - beforeSVD
+		println(afterSVD)
 		//println(a)
-		println(b)
+		//println(b)
 		//println(c)
 		
 	}
