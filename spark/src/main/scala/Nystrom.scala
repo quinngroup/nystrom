@@ -7,6 +7,7 @@
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext._
+import org.apache.spark.storage.StorageLevel
 import breeze.linalg.{DenseVector => BDV}
 import org.apache.spark.mllib.linalg._
 import org.apache.spark.mllib.linalg.distributed._
@@ -37,7 +38,7 @@ object Nystrom {
 				scala.collection.immutable.Set[Int](ss.toSeq:_*)
 
 			}
-		val sampleMatrix = new IndexedRowMatrix(m.rows.filter(sampleSet contains _.index.toInt).cache())
+		val sampleMatrix = new IndexedRowMatrix(m.rows.filter(sampleSet contains _.index.toInt))
 		if(!returnComplement){
 			(sampleMatrix, null)
 		}else{
@@ -67,7 +68,7 @@ object Nystrom {
 				})
 			.groupByKey()
 			.map({
-				case (i,iter) => new IndexedRow(i, Vectors.dense(iter.map(_._2).toArray)) //iter.toSeq.sortWith(_._1<_._1).map(_._2).toArray))
+				case (i,iter) => new IndexedRow(i, Vectors.dense(iter.toArray.sorted.map(_._2).toArray)) //iter.toSeq.sortWith(_._1<_._1).map(_._2).toArray))
 			})
 		)
 	/*def dotProductKernel(a :Vector, b :Vector) :Double = {
@@ -93,7 +94,7 @@ object Nystrom {
 	def transpose(m :IndexedRowMatrix) :IndexedRowMatrix = new IndexedRowMatrix(
 		m.rows.flatMap({
 			row => row.vector.toArray.zipWithIndex.map({case (x,i) => (i,(row.index, x))})
-			}).groupByKey.map({ case (i, iter) => new IndexedRow(i, Vectors.dense(iter.map(_._2).toArray))}).cache())//iter.toSeq.sortWith(_._1<_._1).map(_._2).toArray))}).cache())
+			}).groupByKey.map({ case (i, iter) => new IndexedRow(i, Vectors.dense(iter.toArray.sorted.map(_._2).toArray))}))//iter.toSeq.sortWith(_._1<_._1).map(_._2).toArray))}).cache())
 		
 	
 	
@@ -102,16 +103,24 @@ object Nystrom {
 		//val W =new IndexedRowMatrix( originalMatrix.rows.filter(chosen contains _.index.toInt ).cache())
 		//val W =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
 		val (w , cp) = sampleIndexedRows(originalMatrix, s,true,assumeOrdered=assumeOrdered)
+//		cp.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		val Kw = computeKernelMatrix(w,w,kernelFunc)
-		val C = new IndexedRowMatrix( computeKernelMatrix(cp, w, kernelFunc).rows.union(Kw.rows))
+		Kw.rows.persist(StorageLevel.MEMORY_AND_DISK)
+//		w.rows.unpersist()
 		val Kw_svd= Kw.computeSVD(Kw.rows.count.toInt) //Do not use numRows() as it counts the rows by looking up the max index + 1 	
 		val S_kw_pinv = vector_pinv(Kw_svd.s)
+		val C = new IndexedRowMatrix( computeKernelMatrix(cp, w, kernelFunc).rows.union(Kw.rows))
+//		C.rows.persist(StorageLevel.MEMORY_AND_DISK)
+//		cp.rows.unpersist()
 		val G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
+		G.rows.persist(StorageLevel.MEMORY_AND_DISK)
+		Kw.rows.unpersist()
+
+//		C.rows.unpersist()
 		val G_svd = G.computeSVD(k)
 		val Vosnys = matrixDotDiag( G.multiply(G_svd.V) , vector_pinv(G_svd.s))
-		
-				
-	
+		Vosnys.rows.persist(StorageLevel.MEMORY_AND_DISK)
+		G.rows.unpersist()
 		(Vosnys,Vectors.dense(G_svd.s.toArray.map(x=>x*x)))
 		
 		
@@ -121,23 +130,37 @@ object Nystrom {
 
 		//val S =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
 		val (sM,cM) = sampleIndexedRows(originalMatrix,s,true,assumeOrdered=assumeOrdered)
+//		cM.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		val V_s_l_T = transpose(oneShotNystrom(sM,m,l, kernelFunc)._1)
+		V_s_l_T.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		//val V_s_l = VV._1
 		//val V_s_l_T = transpose(V_s_l)
 		val Ks = computeKernelMatrix(sM,sM,kernelFunc)
+		
+//		Ks.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		val Kw = matrixProduct( matrixProduct(V_s_l_T,Ks), V_s_l_T) ///  V_s_l.T*Ks*V_s_l
+//		Kw.rows.persist(StorageLevel.MEMORY_AND_DISK)
+//		Ks.rows.unpersist()
 		val Kw_svd= Kw.computeSVD(Kw.rows.count.toInt) //Do not use numRows() as it counts the rows by looking up the max index + 1 	
 		val S_kw_pinv = vector_pinv(Kw_svd.s)
 		val C0 = new IndexedRowMatrix(computeKernelMatrix(cM, sM, kernelFunc).rows.union(Ks.rows))
+//		C0.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		val C = matrixProduct(C0,V_s_l_T)    ///  C0*V_s_l
+//		C.rows.persist(StorageLevel.MEMORY_AND_DISK)
+//		C0.rows.unpersist()
+//		Kw.rows.unpersist()
 
+		
 		//println((Kw.rows.count(),Kw.numCols()))
 		//System.exit(1)
 		val G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
+		G.rows.persist(StorageLevel.MEMORY_AND_DISK)
+		V_s_l_T.rows.unpersist()
+
 		val G_svd = G.computeSVD(k)
 		val Vdnys = matrixDotDiag( G.multiply(G_svd.V) , vector_pinv(G_svd.s))
-		
-				
+		Vdnys.rows.persist(StorageLevel.MEMORY_AND_DISK)
+		G.rows.unpersist()
 	
 		(Vdnys,Vectors.dense(G_svd.s.toArray.map(x=>x*x)))
 	}
@@ -160,7 +183,14 @@ object Nystrom {
 		println("m: "+m.toString)
 		println("s: "+s.toString)
 		println("l: "+l.toString)
-		val sc = new SparkContext(new SparkConf().setAppName("DoubleApp"))
+		val sc = new SparkContext(new SparkConf()
+						.setAppName("DoubleApp")
+						.set("spark.executor.memory","20g")
+						.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+						.set("spark.shuffle.compress","true")
+						.set("spark.rdd.compress","true")
+						.set("spark.shuffle.spill.compress","true")
+						)
 		val data = new IndexedRowMatrix(sc.textFile(datapath).map(line => Vectors.dense(line.split(delimiter).map(_.toDouble))).zipWithIndex.map({case (v,i) => new IndexedRow(i,v)}) )
 		//println(dotProductKernel(Vectors.dense(Array(1.0,2.0,3.0)),Vectors.dense(Array(5.0,6.0,7.0))))
 		//println(matrixProduct(data,data).numRows())
