@@ -139,9 +139,9 @@ object Nystrom {
 		
 //		Ks.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		val Kw = matrixProduct( matrixProduct(V_s_l_T,Ks), V_s_l_T) ///  V_s_l.T*Ks*V_s_l
-//		Kw.rows.persist(StorageLevel.MEMORY_AND_DISK)
-//		Ks.rows.unpersist()
+		Kw.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		val Kw_svd= Kw.computeSVD(Kw.rows.count.toInt) //Do not use numRows() as it counts the rows by looking up the max index + 1 	
+		Kw.rows.unpersist()
 		val S_kw_pinv = vector_pinv(Kw_svd.s)
 		val C0 = new IndexedRowMatrix(computeKernelMatrix(cM, sM, kernelFunc).rows.union(Ks.rows))
 //		C0.rows.persist(StorageLevel.MEMORY_AND_DISK)
@@ -185,7 +185,7 @@ object Nystrom {
 		println("l: "+l.toString)
 		val sc = new SparkContext(new SparkConf()
 						.setAppName("DoubleApp")
-						.set("spark.executor.memory","20g")
+						.set("spark.executor.memory","6g")
 						.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
 						.set("spark.shuffle.compress","true")
 						.set("spark.rdd.compress","true")
