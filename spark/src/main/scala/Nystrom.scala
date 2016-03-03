@@ -98,7 +98,19 @@ object Nystrom {
 		
 	
 	
-	def oneShotNystrom(originalMatrix :IndexedRowMatrix, s: Int, k:Int, kernelFunc: KernelFunc = dotProductKernel, assumeOrdered:Boolean=false): (IndexedRowMatrix, Vector) = {
+	def columnSum(originalMatrix :IndexedRowMatrix) :Vector = 
+		Vectors.dense(originalMatrix.rows.flatMap(_.vector.toArray.zipWithIndex.map(_.swap)).reduceByKey(_+_).collect.sorted.map(_._2).toArray)
+	def rowSum(originalMatrix :IndexedRowMatrix) :Vector =
+		Vectors.dense(originalMatrix.rows.map(row => (row.index, row.vector.toArray.sum)).collect.sorted.map(_._2).toArray)
+	def matrixDotColumn(originalMatrix :IndexedRowMatrix, colVec :Vector, op: Double =>Double = identity) :Vector = {
+		//val col = 
+		Vectors.dense(originalMatrix.rows.map(row => (row.index, row.vector.toArray.zip(colVec.toArray).map(m=> m._1*m._2).sum)).collect.sorted.map(r=>op(r._2)).toArray)
+	}
+	def diagDotMatrix(diag :Vector, originalMatrix :IndexedRowMatrix) :IndexedRowMatrix = {
+		val d = originalMatrix.rows.context.broadcast(diag.toArray)
+		new IndexedRowMatrix(originalMatrix.rows.map( row => new IndexedRow(row.index, Vectors.dense(row.vector.toArray.map(r => r * d.value(row.index.toInt)).toArray))))
+	}
+	def oneShotNystrom(originalMatrix :IndexedRowMatrix, s: Int, k:Int, kernelFunc: KernelFunc = dotProductKernel, assumeOrdered:Boolean=false, normalized:Boolean = false): (IndexedRowMatrix, Vector) = {
 		//val chosen = Set(1,10,50,321,135,512,124,562,845,73,245,327,194,865,14,642,724,634,758)
 		//val W =new IndexedRowMatrix( originalMatrix.rows.filter(chosen contains _.index.toInt ).cache())
 		//val W =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
@@ -112,7 +124,23 @@ object Nystrom {
 		val C = new IndexedRowMatrix( computeKernelMatrix(cp, w, kernelFunc).rows.union(Kw.rows))
 //		C.rows.persist(StorageLevel.MEMORY_AND_DISK)
 //		cp.rows.unpersist()
-		val G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
+		var G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
+		if(normalized){
+			//G.rows.cache()
+			val d = matrixDotColumn(G,columnSum(G), op= (x) => (1.0/math.sqrt(x)))
+			//val KG = matrixProduct(G,G)
+			//KG.rows.cache()
+			//val d2 = rowSum(KG)
+			//val diff = d.toArray.zip(d2.toArray).map(r=>math.abs(r._1-r._2)).sum
+			//println(d2)
+			//println(d)
+			//println("Differences in sum")
+			//println(diff)
+			//for(i <- 0 until d.toArray.size)
+			//	if(math.abs(d(i))<1) println(i,d(i))
+			//System.exit(0)
+			G = diagDotMatrix(d,G)
+		}
 		G.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		Kw.rows.unpersist()
 
@@ -125,7 +153,7 @@ object Nystrom {
 		
 		
 	}
-	def doubleNystrom(originalMatrix :IndexedRowMatrix, s :Int, m :Int, l :Int, k :Int, kernelFunc: KernelFunc = dotProductKernel, assumeOrdered:Boolean=false) : (IndexedRowMatrix, Vector) = {
+	def doubleNystrom(originalMatrix :IndexedRowMatrix, s :Int, m :Int, l :Int, k :Int, kernelFunc: KernelFunc = dotProductKernel, assumeOrdered:Boolean=false, normalized:Boolean = false) : (IndexedRowMatrix, Vector) = {
 
 
 		//val S =new IndexedRowMatrix( originalMatrix.rows.sample(false,s.toDouble/originalMatrix.numRows().toDouble).sortBy(r=>r.index))
@@ -153,7 +181,23 @@ object Nystrom {
 		
 		//println((Kw.rows.count(),Kw.numCols()))
 		//System.exit(1)
-		val G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
+		var G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
+		if(normalized){
+			G.rows.cache()
+			val d = matrixDotColumn(G,columnSum(G)) //, op= (x) => (1.0/math.sqrt(x)))
+			val KG = matrixProduct(G,G)
+			//KG.rows.cache()
+			val d2 = rowSum(KG)
+			val diff = d.toArray.zip(d2.toArray).map(r=>math.abs(r._1-r._2)).sum
+			println(d2)
+			println(d)
+			println("Differences in sum")
+			println(diff)
+			for(i <- 0 until d.toArray.size)
+				if(math.abs(d(i))<1) println(i,d(i))
+			System.exit(0)
+			G = diagDotMatrix(d,G)
+		}
 		G.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		V_s_l_T.rows.unpersist()
 
@@ -185,8 +229,8 @@ object Nystrom {
 		println("l: "+l.toString)
 		val sc = new SparkContext(new SparkConf()
 						.setAppName("DoubleApp")
-						.set("spark.executor.memory","6g")
-						.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+	//					.set("spark.executor.memory","6g")
+						//.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
 						//.set("spark.shuffle.compress","true")
 						//.set("spark.rdd.compress","true")
 						//.set("spark.shuffle.spill.compress","true")
@@ -197,8 +241,8 @@ object Nystrom {
 		//val kernel = rbfKernel(g)_
 		//val k = 10
 		val beforeSVD = System.currentTimeMillis / 1000.0
-		//val a = oneShotNystrom(data,m,k,kernel)._2
-		val b = doubleNystrom(data,m,s,l, k,kernel,assumeOrdered=true)._2
+		val a = oneShotNystrom(data,m,k,kernel, assumeOrdered=true, normalized=true)._2
+		//val b = doubleNystrom(data,m,s,l, k,kernel,assumeOrdered=true, normalized=true)._2
 		//val c = computeKernelMatrix(data,data,kernel).computeSVD(k).s
 		val afterSVD = System.currentTimeMillis/1000.0 - beforeSVD
 		println(afterSVD)
