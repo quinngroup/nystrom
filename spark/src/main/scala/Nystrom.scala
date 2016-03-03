@@ -126,19 +126,12 @@ object Nystrom {
 //		cp.rows.unpersist()
 		var G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
 		if(normalized){
-			//G.rows.cache()
-			val d = matrixDotColumn(G,columnSum(G), op= (x) => (1.0/math.sqrt(x)))
-			//val KG = matrixProduct(G,G)
-			//KG.rows.cache()
-			//val d2 = rowSum(KG)
-			//val diff = d.toArray.zip(d2.toArray).map(r=>math.abs(r._1-r._2)).sum
-			//println(d2)
-			//println(d)
-			//println("Differences in sum")
-			//println(diff)
-			//for(i <- 0 until d.toArray.size)
-			//	if(math.abs(d(i))<1) println(i,d(i))
-			//System.exit(0)
+			//calculating the row sum for the approximate kernel matrix
+			//without constructing K:
+			//since a row sum of K, vector d,  can be represented as K dot ones(n,1)
+			//and since K = GG.T, it follows that d = GG.T dot ones(n,1)
+			//ie, d = G dot dg,  where dg is the row sum of G.T (column sum of G)
+			val d = matrixDotColumn(G,columnSum(G), op= (x) => (1.0/math.sqrt(x))) // applying 1/sqrt(x) once and for all
 			G = diagDotMatrix(d,G)
 		}
 		G.rows.persist(StorageLevel.MEMORY_AND_DISK)
@@ -183,8 +176,10 @@ object Nystrom {
 		//System.exit(1)
 		var G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
 		if(normalized){
+			//TODO: shows problems since G is not positive-definite after kPCA on Kw
+			//wille have to think of a way to calculate the row sum, or normalize before kPCA
 			G.rows.cache()
-			val d = matrixDotColumn(G,columnSum(G)) //, op= (x) => (1.0/math.sqrt(x)))
+			val d = matrixDotColumn(G,columnSum(G), op= (x) => (1.0/math.sqrt(x)))
 			val KG = matrixProduct(G,G)
 			//KG.rows.cache()
 			val d2 = rowSum(KG)
