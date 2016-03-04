@@ -159,11 +159,6 @@ object SpectralClustering{
    */
   
   def main(args:Array[String]){
-
-    val conf = new SparkConf().setAppName("Spectral Clustering")
-    val sc = new SparkContext(conf)
-      
-    //Arguments     
     val g = args(0).toDouble //gamma
     val numClusters = args(1).toInt //number of clusters to input to kmeans
     val numIterations = args(2).toInt //number of iterations to input to kmeans
@@ -171,7 +166,19 @@ object SpectralClustering{
     //val outputpath = args(4)
     
     val groundtruthFile = args(4)
-    val sampleSize = args(5).toInt
+    val sampleSize = args(6).toInt
+    var sample2Size = 0
+    var kpca = 0
+    if (args.size == 9){
+    sample2Size = args(7).toInt
+    kpca = args(8).toInt}
+
+    var conf = new SparkConf().setAppName("Spectral Clustering")
+//    if (args.size == 7)
+	                            conf = conf.set("spark.executor.memory",args(5))
+    val sc = new SparkContext(conf)
+      
+    //Arguments     
     //Read the data    
     var input = sc.textFile(inputpath)
     
@@ -180,9 +187,14 @@ object SpectralClustering{
     
     val beforeSVD = System.currentTimeMillis / 1000.0
     val uu = if (sampleSize > numClusters) {
-    
-	    val (uuu,_) = Nystrom.oneShotNystrom(new IndexedRowMatrix(A.map(r => new IndexedRow(r._2,r._1))), sampleSize,numClusters,Nystrom.rbfKernel(g)_, assumeOrdered=true,normalized=true)
+	    val dataMatrix =new IndexedRowMatrix(A.map(r => new IndexedRow(r._2,r._1)))
+    	if (sample2Size == 0) {
+	    val (uuu,_) = Nystrom.oneShotNystrom(dataMatrix, sampleSize,numClusters,Nystrom.rbfKernel(g)_, assumeOrdered=true,normalized=true)
 		uuu
+	}else{
+		val (uuu,_) = Nystrom.doubleNystrom(dataMatrix, sampleSize, sample2Size, kpca, numClusters, Nystrom.rbfKernel(g), assumeOrdered=true)
+		uuu
+	}
     }else{
     
 	    //calculate affinity of all points. For points ([1,(x1,y1)],[2,(x2,y2)]) => (1,(2,affinityValue))

@@ -177,7 +177,7 @@ object Nystrom {
 		var G = matrixDotDiag( C.multiply(Kw_svd.V) , S_kw_pinv, math.sqrt)
 		if(normalized){
 			//TODO: shows problems since G is not positive-definite after kPCA on Kw
-			//wille have to think of a way to calculate the row sum, or normalize before kPCA
+/*			//wille have to think of a way to calculate the row sum, or normalize before kPCA
 			G.rows.cache()
 			val d = matrixDotColumn(G,columnSum(G), op= (x) => (1.0/math.sqrt(x)))
 			val KG = matrixProduct(G,G)
@@ -191,7 +191,7 @@ object Nystrom {
 			for(i <- 0 until d.toArray.size)
 				if(math.abs(d(i))<1) println(i,d(i))
 			System.exit(0)
-			G = diagDotMatrix(d,G)
+			G = diagDotMatrix(d,G)*/
 		}
 		G.rows.persist(StorageLevel.MEMORY_AND_DISK)
 		V_s_l_T.rows.unpersist()
@@ -222,14 +222,16 @@ object Nystrom {
 		println("m: "+m.toString)
 		println("s: "+s.toString)
 		println("l: "+l.toString)
-		val sc = new SparkContext(new SparkConf()
+		var sconf = new SparkConf()
 						.setAppName("DoubleApp")
-	//					.set("spark.executor.memory","6g")
 						//.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
 						//.set("spark.shuffle.compress","true")
 						//.set("spark.rdd.compress","true")
 						//.set("spark.shuffle.spill.compress","true")
-						)
+						
+		if (args.size == 8)
+			sconf = sconf.set("spark.executor.memory",args(7))
+		val sc = new SparkContext(sconf)
 		val data = new IndexedRowMatrix(sc.textFile(datapath).map(line => Vectors.dense(line.split(delimiter).map(_.toDouble))).zipWithIndex.map({case (v,i) => new IndexedRow(i,v)}) )
 		//println(dotProductKernel(Vectors.dense(Array(1.0,2.0,3.0)),Vectors.dense(Array(5.0,6.0,7.0))))
 		//println(matrixProduct(data,data).numRows())
